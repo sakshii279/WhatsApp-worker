@@ -1,4 +1,5 @@
 flask
 requests
 cloudinary
-gunicornw
+gunicorn
+
