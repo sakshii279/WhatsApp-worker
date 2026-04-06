@@ -13,13 +13,13 @@ import cloudinary.uploader
 #  CONFIG — set these as environment variables on Railway
 # ─────────────────────────────────────────
 VERIFY_TOKEN    = os.environ.get("VERIFY_TOKEN", "workflow")
-WHATSAPP_TOKEN  = os.environ.get("WHATSAPP_TOKEN", "")
-APP_SECRET      = os.environ.get("APP_SECRET", "")
-PHONE_NUMBER_ID = os.environ.get("PHONE_NUMBER_ID", "")
+WHATSAPP_TOKEN  = os.environ.get("WHATSAPP_TOKEN", "EAAP0kFGOXZCoBQ05bvjXZCy8BVbxZBHZAxzUasJvZAqkklyGE96RPZAbc0HfZBXBk7ZB0s6KF3Qf0TVzZAmWHlb9qbG2ZA2h8nuOBPcfqQ7P6LNMRjJKzPY9XmISrN4ID9tSTOkjdD74jfxZBfPV7EkJgQpQ3YyuKXJIuyn3enMSywKcUluIPiCRBhMhvijIz3T9Tr0HwZDZD")  # From Meta Business → WhatsApp → API Setup
+APP_SECRET      = os.environ.get("APP_SECRET", "b8c9c0e7225f7f02216181cf418e100d")
+PHONE_NUMBER_ID = os.environ.get("PHONE_NUMBER_ID", "1010582465472264")
 
 CLOUD_NAME      = os.environ.get("CLOUDINARY_CLOUD_NAME", "dyyqnnfkw")
-API_KEY         = os.environ.get("CLOUDINARY_API_KEY", "")
-API_SECRET      = os.environ.get("CLOUDINARY_API_SECRET", "")
+API_KEY         = os.environ.get("CLOUDINARY_API_KEY", "438417615692945")
+API_SECRET      = os.environ.get("CLOUDINARY_API_SECRET", "cfihISbemVT9QbxNp-z3EisUwv0")
 
 LOG_PUBLIC_ID   = "whatsapp_log"   # Cloudinary public ID for the log file
 
@@ -36,6 +36,7 @@ ALLOWED_MIME_TYPES = {
     "application/pdf",
     "application/vnd.ms-excel",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/x-iwork-numbers-sffnumbers",
     "text/csv",
 }
 
@@ -47,6 +48,7 @@ EXTENSION_MAP = {
     "application/pdf"     : ".pdf",
     "application/vnd.ms-excel": ".xls",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+    "application/x-iwork-numbers-sffnumbers": ".numbers",
     "text/csv"            : ".csv",
 }
 
