@@ -1,0 +1,6 @@
+*.pyc
+__pycache__/
+.env
+*.json
+whatsapp_media/
+.DS_Store
