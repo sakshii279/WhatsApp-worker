@@ -1,6 +1,10 @@
-*.pyc
+config.yaml
+dist/
 __pycache__/
+*.pyc
+*.pyo
 .env
-*.json
-whatsapp_media/
-.DS_Store
+logs/
+*.log
+whatsapp_log.json
+tickets.json

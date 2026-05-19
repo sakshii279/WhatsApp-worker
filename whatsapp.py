@@ -6,38 +6,23 @@ import requests
 from datetime import datetime
 from pathlib import Path
 from flask import Flask, request, jsonify
-import cloudinary
-import cloudinary.uploader
 
 # ─────────────────────────────────────────
-#  CONFIG — set these as environment variables on Railway
+#  CONFIG — fill these in from Meta Dashboard
 # ─────────────────────────────────────────
-VERIFY_TOKEN    = os.environ.get("VERIFY_TOKEN", "workflow")
-WHATSAPP_TOKEN  = os.environ.get("WHATSAPP_TOKEN", "EAAP0kFGOXZCoBQ05bvjXZCy8BVbxZBHZAxzUasJvZAqkklyGE96RPZAbc0HfZBXBk7ZB0s6KF3Qf0TVzZAmWHlb9qbG2ZA2h8nuOBPcfqQ7P6LNMRjJKzPY9XmISrN4ID9tSTOkjdD74jfxZBfPV7EkJgQpQ3YyuKXJIuyn3enMSywKcUluIPiCRBhMhvijIz3T9Tr0HwZDZD")  # From Meta Business → WhatsApp → API Setup
-APP_SECRET      = os.environ.get("APP_SECRET", "b8c9c0e7225f7f02216181cf418e100d")
-PHONE_NUMBER_ID = os.environ.get("PHONE_NUMBER_ID", "1010582465472264")
+VERIFY_TOKEN    = "workflow"
+WHATSAPP_TOKEN  = "YOUR_WHATSAPP_TOKEN"
+APP_SECRET      = "YOUR_APP_SECRET"
+DOWNLOAD_DIR    = "media"
+METADATA_LOG    = "whatsapp_log.json"
 
-CLOUD_NAME      = os.environ.get("CLOUDINARY_CLOUD_NAME", "dyyqnnfkw")
-API_KEY         = os.environ.get("CLOUDINARY_API_KEY", "438417615692945")
-API_SECRET      = os.environ.get("CLOUDINARY_API_SECRET", "cfihISbemVT9QbxNp-z3EisUwv0")
-
-LOG_PUBLIC_ID   = "whatsapp_log"   # Cloudinary public ID for the log file
-
-# Configure Cloudinary
-cloudinary.config(
-    cloud_name = CLOUD_NAME,
-    api_key    = API_KEY,
-    api_secret = API_SECRET
-)
-
-# Allowed media types
 ALLOWED_MIME_TYPES = {
     "image/jpeg", "image/png", "image/webp", "image/gif",
     "application/pdf",
     "application/vnd.ms-excel",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "application/x-iwork-numbers-sffnumbers",
     "text/csv",
+    "application/x-iwork-numbers-sffnumbers",
 }
 
 EXTENSION_MAP = {
@@ -48,11 +33,20 @@ EXTENSION_MAP = {
     "application/pdf"     : ".pdf",
     "application/vnd.ms-excel": ".xls",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
-    "application/x-iwork-numbers-sffnumbers": ".numbers",
     "text/csv"            : ".csv",
+    "application/x-iwork-numbers-sffnumbers": ".numbers",
 }
 
 app = Flask(__name__)
+
+
+# ─────────────────────────────────────────
+#  NGROK FIX - bypass browser warning page
+# ─────────────────────────────────────────
+@app.after_request
+def add_ngrok_header(response):
+    response.headers["ngrok-skip-browser-warning"] = "true"
+    return response
 
 
 # ─────────────────────────────────────────
@@ -70,82 +64,41 @@ def verify_signature(payload_body, signature_header):
 
 
 # ─────────────────────────────────────────
-#  CLOUDINARY — log helpers
+#  MEDIA DOWNLOAD
 # ─────────────────────────────────────────
-def fetch_log_from_cloudinary():
-    """Download the current log JSON from Cloudinary."""
-    try:
-        url = f"https://res.cloudinary.com/{CLOUD_NAME}/raw/upload/{LOG_PUBLIC_ID}.json"
-        response = requests.get(url)
-        if response.status_code == 200:
-            return response.json()
-    except Exception as e:
-        print(f"⚠️  Could not fetch log from Cloudinary: {e}")
-    return []
+def get_media_url(media_id):
+    url     = f"https://graph.facebook.com/v19.0/{media_id}"
+    headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
+    response = requests.get(url, headers=headers)
+    response.raise_for_status()
+    data = response.json()
+    return data.get("url"), data.get("mime_type"), data.get("file_size")
 
 
-def push_log_to_cloudinary(log):
-    """Upload the updated log JSON to Cloudinary, overwriting the previous one."""
-    try:
-        log_bytes = json.dumps(log, indent=2, ensure_ascii=False).encode("utf-8")
-        cloudinary.uploader.upload(
-            log_bytes,
-            public_id        = LOG_PUBLIC_ID,
-            resource_type    = "raw",
-            overwrite        = True,
-            invalidate       = True,
-            format           = "json"
-        )
-        print(f"✅  Log updated on Cloudinary ({len(log)} records)")
-    except Exception as e:
-        print(f"⚠️  Could not push log to Cloudinary: {e}")
-
-
-def append_to_log(record):
-    log = fetch_log_from_cloudinary()
-    log.append(record)
-    push_log_to_cloudinary(log)
-
-
-# ─────────────────────────────────────────
-#  CLOUDINARY — media upload
-# ─────────────────────────────────────────
-def upload_media_to_cloudinary(media_url, mime_type, filename_hint, sender, timestamp):
-    """Download media from Meta and upload directly to Cloudinary."""
+def download_media(media_url, mime_type, filename_hint, sender, timestamp):
     headers  = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
     response = requests.get(media_url, headers=headers, stream=True)
     response.raise_for_status()
 
     date_str = datetime.fromtimestamp(int(timestamp)).strftime("%Y-%m-%d")
     ext      = EXTENSION_MAP.get(mime_type, "")
+
     if filename_hint and "." in filename_hint:
-        filename = filename_hint
+        filename = filename_hint.strip()
     else:
         ts       = datetime.fromtimestamp(int(timestamp)).strftime("%H%M%S")
         filename = f"media_{ts}{ext}"
 
-    # Cloudinary folder structure: whatsapp_media/<sender>/<date>/
-    folder      = f"whatsapp_media/{sender}/{date_str}"
-    public_id   = f"{folder}/{Path(filename).stem}"
+    save_path = Path(DOWNLOAD_DIR) / sender / date_str / filename
+    save_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Determine resource type
-    if mime_type.startswith("image/"):
-        resource_type = "image"
-    else:
-        resource_type = "raw"
+    with open(save_path, "wb") as f:
+        for chunk in response.iter_content(chunk_size=8192):
+            f.write(chunk)
 
-    result = cloudinary.uploader.upload(
-        response.content,
-        public_id     = public_id,
-        resource_type = resource_type,
-        overwrite     = False,
-        format        = ext.lstrip(".") if ext else None
-    )
-
-    cloudinary_url = result.get("secure_url")
-    size_kb        = round(len(response.content) / 1024, 2)
-    print(f"      ☁️   Uploaded to Cloudinary: {cloudinary_url}")
-    return cloudinary_url, size_kb
+    size_kb = round(save_path.stat().st_size / 1024, 2)
+    print(f"      💾  Saved: {filename} ({size_kb} KB) → {save_path}")
+    return str(save_path), size_kb
 
 
 # ─────────────────────────────────────────
@@ -176,12 +129,10 @@ def process_message(message, contact_name, contact_phone):
         "context"  : None,
     }
 
-    # ── Text message ───────────────────────────────────
     if msg_type == "text":
         record["text"] = message.get("text", {}).get("body", "")
         print(f"      Text      : {record['text'][:150]}")
 
-    # ── Media messages ─────────────────────────────────
     elif msg_type in ("image", "document", "video", "audio", "sticker"):
         media_data = message.get(msg_type, {})
         media_id   = media_data.get("id")
@@ -191,46 +142,36 @@ def process_message(message, contact_name, contact_phone):
 
         if media_id:
             try:
-                # Step 1 — get temporary Meta URL
-                url      = f"https://graph.facebook.com/v19.0/{media_id}"
-                headers  = {"Authorization": f"Bearer {WHATSAPP_TOKEN}"}
-                resp     = requests.get(url, headers=headers)
-                resp.raise_for_status()
-                data     = resp.json()
-                media_url  = data.get("url")
-                mime_type  = data.get("mime_type")
-                file_size  = data.get("file_size")
-
+                media_url, mime_type, file_size = get_media_url(media_id)
                 print(f"      MIME      : {mime_type}")
                 print(f"      Filename  : {filename or '(no filename)'}")
 
                 if mime_type in ALLOWED_MIME_TYPES:
                     record["hasMedia"] = True
-                    cloudinary_url, size_kb = upload_media_to_cloudinary(
+                    saved_path, size_kb = download_media(
                         media_url, mime_type, filename, contact_phone, timestamp
                     )
                     record["media"] = {
-                        "mediaId"     : media_id,
-                        "filename"    : filename,
-                        "mimeType"    : mime_type,
-                        "sizeBytes"   : file_size,
-                        "sizeKB"      : size_kb,
-                        "cloudinaryUrl": cloudinary_url,
+                        "mediaId"  : media_id,
+                        "filename" : filename or Path(saved_path).name,
+                        "mimeType" : mime_type,
+                        "sizeBytes": file_size,
+                        "sizeKB"   : size_kb,
+                        "savedPath": saved_path,
                     }
                 else:
-                    print(f"      ⏭️   Skipped (mime type not allowed: {mime_type})")
+                    print(f"      ⏭️   Skipped (mime type not in allowed list: {mime_type})")
                     record["hasMedia"] = True
-                    record["media"]    = {
+                    record["media"] = {
                         "mediaId" : media_id,
                         "mimeType": mime_type,
                         "skipped" : True,
                         "reason"  : "mime type not in allowed list",
                     }
             except Exception as e:
-                print(f"      ⚠️  Media error: {e}")
+                print(f"      ⚠️  Media download failed: {e}")
                 record["media"] = {"error": str(e)}
 
-    # ── Reply context ───────────────────────────────────
     if "context" in message:
         record["context"] = {
             "replyToMessageId": message["context"].get("id"),
@@ -242,6 +183,19 @@ def process_message(message, contact_name, contact_phone):
 
 
 # ─────────────────────────────────────────
+#  LOG
+# ─────────────────────────────────────────
+def append_to_log(record):
+    log = []
+    if os.path.exists(METADATA_LOG):
+        with open(METADATA_LOG) as f:
+            log = json.load(f)
+    log.append(record)
+    with open(METADATA_LOG, "w") as f:
+        json.dump(log, f, indent=2, ensure_ascii=False)
+
+
+# ─────────────────────────────────────────
 #  WEBHOOK ROUTES
 # ─────────────────────────────────────────
 @app.route("/webhook", methods=["GET"])
@@ -250,13 +204,11 @@ def verify_webhook():
     token     = request.args.get("hub.verify_token", "")
     challenge = request.args.get("hub.challenge", "")
 
-    print("mode=" + mode + " token=" + token + " expected=" + VERIFY_TOKEN)
-
     if mode == "subscribe" and token == VERIFY_TOKEN:
         print("✅  Webhook verified!")
         return challenge, 200
     else:
-        print("❌  Failed - token mismatch")
+        print("❌  Webhook verification failed — token mismatch")
         return "Forbidden", 403
 
 
@@ -292,6 +244,7 @@ def receive_message():
                     print(json.dumps(record, indent=2, ensure_ascii=False))
 
                     append_to_log(record)
+                    print(f"\n  📝  Logged to {METADATA_LOG}")
 
     except Exception as e:
         print(f"⚠️  Error processing webhook: {e}")
@@ -305,8 +258,10 @@ def receive_message():
 #  ENTRY POINT
 # ─────────────────────────────────────────
 if __name__ == "__main__":
-    print("\n🚀  WhatsApp Webhook started")
-    print(f"    Webhook URL : http://<your-server>/webhook")
-    print(f"    Media       → Cloudinary (whatsapp_media/)")
-    print(f"    Log         → Cloudinary ({LOG_PUBLIC_ID}.json)\n")
+    Path(DOWNLOAD_DIR).mkdir(exist_ok=True)
+    print("\n🚀  WhatsApp Attachment Downloader started")
+    print(f"    Webhook URL  : http://<your-server>:5000/webhook")
+    print(f"    Allowed types: Images, PDFs, Excel files, CSV, Apple Numbers")
+    print(f"    Media saved  → ./{DOWNLOAD_DIR}/<phone>/<date>/")
+    print(f"    Log file     → ./{METADATA_LOG}")
     app.run(port=5000, debug=False)
