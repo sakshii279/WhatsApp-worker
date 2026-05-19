@@ -8,3 +8,4 @@ logs/
 *.log
 whatsapp_log.json
 tickets.json
+media/
