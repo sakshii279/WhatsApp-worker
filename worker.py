@@ -8,17 +8,20 @@ Local:
 
 Azure:
     gunicorn worker:app
-    WHATSAPP_CONFIG_PATH env var for config location (optional)
+    Account config read from environment variables:
+        WHATSAPP_PHONE_NUMBER_ID_1, WHATSAPP_ACCESS_TOKEN_1, WHATSAPP_VERIFY_TOKEN_1
+        WHATSAPP_PHONE_NUMBER_ID_2, WHATSAPP_ACCESS_TOKEN_2, WHATSAPP_VERIFY_TOKEN_2
+        ... and so on
 
 Routing:
     Meta sends phone_number_id in every payload.
-    worker looks up matching account in config and processes accordingly.
+    worker looks up matching account and processes accordingly.
     One port, one process, all accounts.
 
 Endpoints:
-    GET  /webhook          → Meta verification (uses verify_token per account)
-    POST /webhook          → incoming messages (routed by phone_number_id)
-    GET  /health           → Azure health check
+    GET  /webhook  → Meta verification
+    POST /webhook  → incoming messages routed by phone_number_id
+    GET  /health   → Azure health check
 """
 
 import argparse
@@ -43,11 +46,56 @@ from exception_handler import handle_success
 
 _IST = timezone(timedelta(hours=5, minutes=30))
 
-# ── module-level state (set at init) ──────────────────────────
+# ── module-level state ────────────────────────────────────────
 _log      = None
 _conn     = None
 _accounts = {}   # phone_number_id → account dict
 _cfg      = {}
+
+
+# ── Account loading ───────────────────────────────────────────
+
+def _load_accounts_from_env() -> dict:
+    """
+    Read account config from environment variables.
+    Scans for WHATSAPP_PHONE_NUMBER_ID_1, _2, _3 ... until one is missing.
+    Returns phone_number_id → account dict.
+    """
+    accounts = {}
+    i = 1
+    while True:
+        phone_number_id = os.environ.get(f"WHATSAPP_PHONE_NUMBER_ID_{i}")
+        if not phone_number_id:
+            break
+        access_token  = os.environ.get(f"WHATSAPP_ACCESS_TOKEN_{i}", "")
+        verify_token  = os.environ.get(f"WHATSAPP_VERIFY_TOKEN_{i}", "")
+        app_secret    = os.environ.get(f"WHATSAPP_APP_SECRET_{i}", "")
+        name          = os.environ.get(f"WHATSAPP_ACCOUNT_NAME_{i}", f"account_{i}")
+        accounts[str(phone_number_id)] = {
+            "name"           : name,
+            "phone_number_id": phone_number_id,
+            "access_token"   : access_token,
+            "verify_token"   : verify_token,
+            "app_secret"     : app_secret,
+        }
+        i += 1
+    return accounts
+
+
+def _load_accounts_from_config(config_accounts: list) -> dict:
+    """Build phone_number_id → account dict from config.yaml accounts list."""
+    return {str(a["phone_number_id"]): a for a in config_accounts}
+
+
+def _resolve_accounts(config_accounts: list) -> dict:
+    """
+    Use env vars on Azure, config.yaml locally.
+    If env vars are present they take priority.
+    """
+    env_accounts = _load_accounts_from_env()
+    if env_accounts:
+        return env_accounts
+    return _load_accounts_from_config(config_accounts)
 
 
 # ── Config ────────────────────────────────────────────────────
@@ -59,12 +107,44 @@ def _resolve_config_path() -> str:
     return args.config or os.environ.get("WHATSAPP_CONFIG_PATH", "config.yaml")
 
 
-def _build_account_map(accounts: list) -> dict:
-    """Map phone_number_id → account dict for fast lookup."""
-    return {str(a["phone_number_id"]): a for a in accounts}
+def _load_cfg() -> dict:
+    """
+    Load infrastructure config (storage, kv, rabbitmq).
+    On Azure without config.yaml, fall back to env vars for storage paths.
+    """
+    config_path = _resolve_config_path()
+    if os.path.exists(config_path):
+        ConfigManager.init(config_path)
+        ConfigManager.load()
+        return {
+            "whatsapp_accounts": ConfigManager.getProperty("whatsapp_accounts", []),
+            "storage"          : ConfigManager.getProperty("storage"),
+            "polling"          : ConfigManager.getProperty("polling", {}),
+            "kv"               : ConfigManager.getProperty("kv", {}),
+            "worker"           : ConfigManager.getProperty("worker", {}),
+        }
+    # Azure fallback — no config.yaml, read storage paths from env
+    return {
+        "whatsapp_accounts": [],
+        "storage": {
+            "attachments_dir": os.environ.get("WHATSAPP_ATTACHMENTS_DIR", "/tmp/attachments"),
+            "checkpoints_dir": os.environ.get("WHATSAPP_CHECKPOINTS_DIR", "/tmp/checkpoints"),
+            "logs_dir"       : os.environ.get("WHATSAPP_LOGS_DIR", "/tmp/logs"),
+        },
+        "polling": {"interval_seconds": 60},
+        "kv"     : {
+            "host"   : os.environ.get("KV_HOST", "192.168.100.231"),
+            "port"   : int(os.environ.get("KV_PORT", 5322)),
+            "dbnum"  : int(os.environ.get("KV_DBNUM", 2)),
+            "timeout": int(os.environ.get("KV_TIMEOUT", 5)),
+        },
+        "worker": {
+            "whatsapp_connector": os.environ.get("WHATSAPP_CONNECTOR", "rabbitmq")
+        },
+    }
 
 
-# ── KV Status Helpers ─────────────────────────────────────────
+# ── KV Helpers ────────────────────────────────────────────────
 
 def _now() -> int:
     return int(datetime.now(timezone.utc).timestamp())
@@ -146,11 +226,6 @@ def make_app() -> Flask:
 
     @flask_app.get("/webhook")
     def verify():
-        """
-        Meta verification handshake.
-        Meta sends verify_token — we match it against the correct account
-        by looking up phone_number_id if provided, else check all accounts.
-        """
         mode      = request.args.get("hub.mode")
         token     = request.args.get("hub.verify_token")
         challenge = request.args.get("hub.challenge")
@@ -158,7 +233,6 @@ def make_app() -> Flask:
         if mode != "subscribe":
             abort(403)
 
-        # find the account whose verify_token matches
         matched = next(
             (a for a in _accounts.values() if a["verify_token"] == token),
             None
@@ -172,15 +246,10 @@ def make_app() -> Flask:
 
     @flask_app.post("/webhook")
     def receive():
-        """
-        Receive incoming messages from Meta.
-        Route to correct account by phone_number_id in payload.
-        """
         sig     = request.headers.get("X-Hub-Signature-256", "")
         payload = request.get_data()
         data    = request.get_json(silent=True) or {}
 
-        # extract phone_number_id from payload metadata
         phone_number_id = None
         for entry in data.get("entry", []):
             for change in entry.get("changes", []):
@@ -190,11 +259,10 @@ def make_app() -> Flask:
 
         account = _accounts.get(str(phone_number_id)) if phone_number_id else None
         if not account:
-            _log.warn("worker", f"No account found for phone_number_id={phone_number_id}")
+            _log.warn("worker", f"No account for phone_number_id={phone_number_id}")
             return jsonify({"status": "ok"}), 200
 
-        app_secret = account.get("app_secret", "")
-        if not _verify_signature(payload, sig, app_secret):
+        if not _verify_signature(payload, sig, account.get("app_secret", "")):
             _log.warn(account["name"], "Invalid signature — rejecting payload")
             abort(401)
 
@@ -214,10 +282,12 @@ def make_app() -> Flask:
 
     @flask_app.get("/health")
     def health():
-        """Health check for Azure App Service."""
         return jsonify({
             "status"  : "ok",
-            "accounts": list(_accounts.keys()),
+            "accounts": [
+                {"name": a["name"], "phone_number_id": a["phone_number_id"]}
+                for a in _accounts.values()
+            ],
         }), 200
 
     return flask_app
@@ -226,7 +296,6 @@ def make_app() -> Flask:
 # ── Heartbeat thread ──────────────────────────────────────────
 
 def _heartbeat_loop() -> None:
-    """Send heartbeat for all accounts every 30 seconds."""
     while True:
         time.sleep(30)
         for account in _accounts.values():
@@ -236,34 +305,29 @@ def _heartbeat_loop() -> None:
                 pass
 
 
-# ── Init (runs once — at import time for gunicorn) ────────────
+# ── Init ──────────────────────────────────────────────────────
 
 def _init() -> Flask:
     global _log, _conn, _accounts, _cfg
 
-    config_path = _resolve_config_path()
-    ConfigManager.init(config_path)
-    ConfigManager.load()
-
-    _cfg = {
-        "whatsapp_accounts": ConfigManager.getProperty("whatsapp_accounts"),
-        "storage"          : ConfigManager.getProperty("storage"),
-        "polling"          : ConfigManager.getProperty("polling"),
-    }
-
-    kv_store.init(ConfigManager.getProperty("kv", {}))
+    _cfg      = _load_cfg()
+    kv_store.init(_cfg["kv"])
     _log      = LoggerFactory.get()
-    _conn     = ConnectorFactory.get(
-        ConfigManager.getProperty("worker", {}).get("whatsapp_connector", "rabbitmq")
-    )
-    _accounts = _build_account_map(_cfg["whatsapp_accounts"])
+    _conn     = ConnectorFactory.get(_cfg["worker"].get("whatsapp_connector", "rabbitmq"))
+    _accounts = _resolve_accounts(_cfg["whatsapp_accounts"])
+
+    if not _accounts:
+        raise ValueError(
+            "No WhatsApp accounts found. "
+            "Set WHATSAPP_PHONE_NUMBER_ID_1, WHATSAPP_ACCESS_TOKEN_1, WHATSAPP_VERIFY_TOKEN_1 "
+            "env vars or add accounts to config.yaml."
+        )
 
     for account in _accounts.values():
         set_status(account["name"], 1)
         _log.info(account["name"], "Account registered")
 
     Thread(target=_heartbeat_loop, daemon=True).start()
-
     _log.info("worker", f"Started — handling {len(_accounts)} account(s)")
     return make_app()
 
