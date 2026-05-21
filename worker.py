@@ -104,7 +104,11 @@ def _resolve_config_path() -> str:
     p = argparse.ArgumentParser()
     p.add_argument("--config", default=None)
     args, _ = p.parse_known_args()
-    return args.config or os.environ.get("WHATSAPP_CONFIG_PATH", "config.yaml")
+    raw = args.config or os.environ.get("WHATSAPP_CONFIG_PATH", "config.yaml")
+    # resolve relative to the directory this file lives in, not cwd
+    if not os.path.isabs(raw):
+        raw = os.path.join(os.path.dirname(os.path.abspath(__file__)), raw)
+    return raw
 
 
 def _load_cfg() -> dict:
@@ -112,8 +116,8 @@ def _load_cfg() -> dict:
     Load infrastructure config (storage, kv, rabbitmq).
     On Azure without config.yaml, fall back to env vars for storage paths.
     """
-    config_path = _resolve_config_path()
-    if os.path.exists(config_path):
+    config_path = os.path.abspath(_resolve_config_path())
+    if os.path.isfile(config_path):
         ConfigManager.init(config_path)
         ConfigManager.load()
         return {
