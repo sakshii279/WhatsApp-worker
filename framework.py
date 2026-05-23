@@ -55,6 +55,7 @@ Existing files (kv_store.py, rabbit_logger.py, connection.py) untouched.
 """
 
 import json
+import logging
 import os
 import subprocess
 import platform
@@ -63,6 +64,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timezone, timedelta
 
 _IST = timezone(timedelta(hours=5, minutes=30))
+_pylog = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────
 # SHARED UTIL
@@ -261,13 +263,61 @@ class HTTPAdapter(MessageConnector):
 
 
 # ─────────────────────────────────────────────
+# ADAPTER: Azure Service Bus
+# ─────────────────────────────────────────────
+
+class ServiceBusAdapter(MessageConnector):
+    def __init__(self, cfg):
+        self.connection_str = cfg.get("connection_string", "")
+        self.queue_name     = cfg.get("queue", "whatsapp_data")
+        self.fallback       = cfg.get("fallback_path", "/tmp/servicebus_fallback.json")
+        self._client        = None
+
+    def _get_client(self):
+        if not self._client:
+            from azure.servicebus import ServiceBusClient
+            self._client = ServiceBusClient.from_connection_string(self.connection_str)
+        return self._client
+
+    def send(self, data: dict) -> bool:
+        try:
+            from azure.servicebus import ServiceBusMessage
+            client = self._get_client()
+            sender = client.get_queue_sender(queue_name=self.queue_name)
+            msg    = ServiceBusMessage(json.dumps(data))
+            with sender:
+                sender.send_messages(msg)
+            return True
+        except Exception as exc:
+            _pylog.warning("ServiceBus send failed: %s", exc)
+            return self._write_fallback(data)
+
+    def receive(self) -> list:
+        return []
+
+    def _write_fallback(self, data: dict) -> bool:
+        try:
+            existing = []
+            if os.path.exists(self.fallback):
+                with open(self.fallback, "r") as f:
+                    existing = json.load(f)
+            existing.append(data)
+            with open(self.fallback, "w") as f:
+                json.dump(existing, f, indent=2)
+        except Exception:
+            pass
+        return False
+
+
+# ─────────────────────────────────────────────
 # CONNECTOR FACTORY
 # ─────────────────────────────────────────────
 
 _ADAPTER_MAP = {
-    "rabbitmq": RabbitMQAdapter,
-    "kv":       KVAdapter,
-    "http":     HTTPAdapter,
+    "rabbitmq"  : RabbitMQAdapter,
+    "kv"        : KVAdapter,
+    "http"      : HTTPAdapter,
+    "servicebus": ServiceBusAdapter,
 }
 
 _connector_instances: dict = {}
