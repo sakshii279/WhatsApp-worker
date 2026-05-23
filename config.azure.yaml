@@ -24,7 +24,7 @@ worker:
 connectors:
   servicebus:
     type: servicebus
-    connection_string: "Endpoint=sb://whatsapp-worker.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=1a9BbUxQ8xqfBj2uwoD3y+C1rDh3D23HY+ASbBC986k="
+    connection_string: "Endpoint=sb://whatsapp-worker-s.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=fqHAxbBYVqtbiQdYKgc85zEyh7/ohunNH+ASbGbqtMY="
     queue: whatsapp_data
     fallback_path: /tmp/servicebus_fallback.json
 
