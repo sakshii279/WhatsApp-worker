@@ -12,11 +12,6 @@ monitor:
   check_interval_seconds: 30
   restart_after_silence_seconds: 300
 
-rabbitmq:
-  host: 192.168.100.152
-  api_port: 3333
-  queue: whatsapp_data
-
 kv:
   host: 192.168.100.231
   port: 5322
@@ -24,15 +19,14 @@ kv:
   timeout: 5
 
 worker:
-  whatsapp_connector: rabbitmq
+  whatsapp_connector: servicebus
 
 connectors:
-  rabbitmq:
-    type: rabbitmq
-    host: 192.168.100.152
-    api_port: 3333
+  servicebus:
+    type: servicebus
+    connection_string: "Endpoint=sb://whatsapp-worker.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=1a9BbUxQ8xqfBj2uwoD3y+C1rDh3D23HY+ASbBC986k="
     queue: whatsapp_data
-    fallback_path: /tmp/logs/rabbit_fallback.json
+    fallback_path: /tmp/servicebus_fallback.json
 
   kv:
     type: kv
