@@ -13,6 +13,7 @@ from flask import Flask, request, jsonify
 VERIFY_TOKEN    = "workflow"
 WHATSAPP_TOKEN  = "YOUR_WHATSAPP_TOKEN"
 APP_SECRET      = "YOUR_APP_SECRET"
+PHONE_NUMBER_ID = "YOUR_PHONE_NUMBER_ID" # from Meta Dashboard → WhatsApp → API Setup
 DOWNLOAD_DIR    = "media"
 METADATA_LOG    = "whatsapp_log.json"
 
@@ -100,6 +101,27 @@ def download_media(media_url, mime_type, filename_hint, sender, timestamp):
     print(f"      💾  Saved: {filename} ({size_kb} KB) → {save_path}")
     return str(save_path), size_kb
 
+# ─────────────────────────────────────────
+#  SEND MESSAGE
+# ─────────────────────────────────────────
+def send_whatsapp_message(to_phone, text):
+    url     = f"https://graph.facebook.com/v19.0/{"1151798138012301"}/messages"
+    headers = {
+        "Authorization": f"Bearer {"EAAVZBeZCcyzEwBRWgn2qVMZBn3ustzDdWw01I0lR9SXAXwq05VqwYTfbgUvNLNHxApEP9SAQnpVnZBJpFFK0k0YMtePsEM88B8cuZA36PhYkINmOzxVkwLcGrquAdIbpxImeYR784CykmE4Gg1t8dx225JLZBZCQ9f9iLLzQP8D8fYZCytYcH8ttZAve2TpJGnKNPAwZDZD"}",
+        "Content-Type" : "application/json",
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "to"               : to_phone,
+        "type"             : "text",
+        "text"             : {"body": text},
+    }
+    try:
+        response = requests.post(url, headers=headers, json=payload)
+        response.raise_for_status()
+        print(f"      ✉️   Ack sent to {to_phone}")
+    except Exception as e:
+        print(f"      ⚠️  Failed to send ack to {to_phone}: {e}")
 
 # ─────────────────────────────────────────
 #  MESSAGE PROCESSOR
@@ -245,6 +267,9 @@ def receive_message():
 
                     append_to_log(record)
                     print(f"\n  📝  Logged to {METADATA_LOG}")
+
+                    ack = "Thank you! We have received your message and will get back to you shortly."
+                    send_whatsapp_message(sender_phone, ack)
 
     except Exception as e:
         print(f"⚠️  Error processing webhook: {e}")
