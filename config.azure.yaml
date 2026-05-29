@@ -1,4 +1,8 @@
-whatsapp_accounts: []
+whatsapp_accounts:
+  - name: Ekarshi OpenSource Foundation
+    phone_number_id: "1151798138012301"
+    access_token: "EAAVZBeZCcyzEwBRWgn2qVMZBn3ustzDdWw01I0lR9SXAXwq05VqwYTfbgUvNLNHxApEP9SAQnpVnZBJpFFK0k0YMtePsEM88B8cuZA36PhYkINmOzxVkwLcGrquAdIbpxImeYR784CykmE4Gg1t8dx225JLZBZCQ9f9iLLzQP8D8fYZCytYcH8ttZAve2TpJGnKNPAwZDZD"
+    verify_token: "webhook"
 
 storage:
   attachments_dir: /tmp/attachments
