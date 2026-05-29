@@ -1,4 +1,4 @@
-name: Deploy WhatsApp Worker to Azure
+git add .name: Deploy WhatsApp Worker to Azure
 
 on:
   push:
