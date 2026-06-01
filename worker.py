@@ -297,7 +297,7 @@ def make_app() -> Flask:
                     {"name": a["name"], "phone_number_id": a["phone_number_id"]}
                     for a in _accounts.values()
                 ],
-            }), 200
+            }), 200 
 
     return flask_app
 
