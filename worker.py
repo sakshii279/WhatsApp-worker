@@ -284,15 +284,20 @@ def make_app() -> Flask:
         update_heartbeat(account["name"])
         return jsonify({"status": "ok"}), 200
 
-    @flask_app.get("/health")
-    def health():
-        return jsonify({
-            "status"  : "ok",
-            "accounts": [
-                {"name": a["name"], "phone_number_id": a["phone_number_id"]}
-                for a in _accounts.values()
-            ],
-        }), 200
+        @flask_app.get("/")
+        def root():
+            return jsonify({"status": "ok"}), 200
+
+        @flask_app.get("/health")
+        def health():
+
+            return jsonify({
+                "status": "ok",
+                "accounts": [
+                    {"name": a["name"], "phone_number_id": a["phone_number_id"]}
+                    for a in _accounts.values()
+                ],
+            }), 200
 
     return flask_app
 
