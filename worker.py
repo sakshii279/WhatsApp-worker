@@ -31,6 +31,8 @@ import os
 import time
 from datetime import datetime, timezone, timedelta
 from threading import Thread
+import json
+from azure.servicebus import ServiceBusClient as SBClient, ServiceBusMessage
 
 from flask import Flask, request, jsonify, abort
 
@@ -191,16 +193,33 @@ def _verify_signature(payload: bytes, signature: str, app_secret: str) -> bool:
     return hmac.compare_digest(expected, signature)
 
 
+def _send_to_topic(record: dict) -> bool:
+    """Send record to Azure Service Bus topic so both dashboard and James can consume it."""
+    conn_str   = os.environ.get("SERVICEBUS_CONNECTION_STRING", "")
+    topic_name = os.environ.get("SERVICEBUS_TOPIC", "whatsapp-messages")
+    if not conn_str:
+        return False
+    try:
+        with SBClient.from_connection_string(conn_str) as client:
+            with client.get_topic_sender(topic_name=topic_name) as sender:
+                body = json.dumps({"InputDataJson": json.dumps(record)})
+                sender.send_messages(ServiceBusMessage(body))
+        return True
+    except Exception as exc:
+        _log.error("worker", f"Service Bus send failed: {exc}")
+        return False
+
 # ── Process One Message ───────────────────────────────────────
 
 def process_one(msg: dict, account: dict) -> int:
-    name       = account["name"]
-    sender     = wa_parser.get_sender(msg)
-    msg_id     = wa_parser.get_message_id(msg)
-    short      = wa_parser.msg_short(msg_id)
-    epoch      = _now()
+    name = account["name"]
+    sender = wa_parser.get_sender(msg)
+    msg_id = wa_parser.get_message_id(msg)
+    short = wa_parser.msg_short(msg_id)
+    epoch = _now()
+
     media_list = wa_parser.collect_media(msg)
-    att_dir    = _cfg["storage"]["attachments_dir"]
+    att_dir = _cfg["storage"]["attachments_dir"]
 
     conn = connection.get_connection(account)
     try:
@@ -213,15 +232,20 @@ def process_one(msg: dict, account: dict) -> int:
 
     record = json_builder.build_record(msg, name, saved)
 
-    ok = _conn.send(record)
+    # ── Send to Azure Service Bus Topic ──────────────────────
+    ok = _send_to_topic(record)
     if ok:
-        _log.info(name, f"Sent record: sender={sender} type={msg.get('type')}")
+        _log.info(name, f"Sent to Service Bus topic: sender={sender} type={msg.get('type')}")
     else:
-        _log.warn(name, f"Connector unavailable — record in fallback: sender={sender}")
+        _log.warn(name, f"Service Bus unavailable — trying fallback connector")
+        ok = _conn.send(record)  # fallback to RabbitMQ
+        if ok:
+            _log.info(name, f"Sent via fallback connector: sender={sender}")
+        else:
+            _log.warn(name, f"Both connectors unavailable — record lost: sender={sender}")
 
     checkpoint.save(_cfg["storage"]["checkpoints_dir"], name, msg_id)
     return handle_success(name, f"Processed message {short}")
-
 
 # ── Flask App ─────────────────────────────────────────────────
 
@@ -297,7 +321,7 @@ def make_app() -> Flask:
                     {"name": a["name"], "phone_number_id": a["phone_number_id"]}
                     for a in _accounts.values()
                 ],
-            }), 200 
+            }), 200
 
     return flask_app
 
