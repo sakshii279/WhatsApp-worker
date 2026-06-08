@@ -159,19 +159,26 @@ def _verify_signature(payload: bytes, signature: str, app_secret: str) -> bool:
 
 # ── Service Bus Topic Sender ──────────────────────────────────
 def _send_to_topic(record: dict) -> bool:
-    """Send record to Azure Service Bus topic so both dashboard and James can consume it."""
-    conn_str   = os.environ.get("SERVICEBUS_CONNECTION_STRING", "")
+    """Send record to Azure Service Bus topic."""
+    conn_str = os.environ.get("SERVICEBUS_CONNECTION_STRING", "")
     topic_name = os.environ.get("SERVICEBUS_TOPIC", "whatsapp-messages")
+
     if not conn_str:
+        print(f"[SERVICE BUS] ERROR: SERVICEBUS_CONNECTION_STRING is not set!")
         return False
+
+    print(f"[SERVICE BUS] Attempting to send to topic: {topic_name}")
+    print(f"[SERVICE BUS] Connection string length: {len(conn_str)}")
+
     try:
         with SBClient.from_connection_string(conn_str) as client:
             with client.get_topic_sender(topic_name=topic_name) as sender:
                 body = json.dumps({"InputDataJson": json.dumps(record)})
                 sender.send_messages(ServiceBusMessage(body))
+        print(f"[SERVICE BUS] SUCCESS: Message sent to topic {topic_name}")
         return True
     except Exception as exc:
-        _log.error("worker", f"Service Bus send failed: {exc}")
+        print(f"[SERVICE BUS] FAILED: {type(exc).__name__}: {exc}")
         return False
 
 # ── Process One Message ───────────────────────────────────────
