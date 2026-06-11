@@ -246,8 +246,15 @@ def make_app() -> Flask:
         data = request.get_json(silent=True) or {}
 
         # LOG RAW PAYLOAD — remove after debugging
-        print(f"[WEBHOOK] RAW PAYLOAD: {json.dumps(data)}")
-        print(f"[WEBHOOK] REGISTERED ACCOUNTS: {list(_accounts.keys())}")
+        import sys
+        def _dbg(msg):
+            with open("/tmp/webhook_debug.log", "a") as f:
+                f.write(msg + "\n")
+            print(msg, flush=True)
+            sys.stdout.flush()
+
+        _dbg(f"[WEBHOOK] RAW PAYLOAD: {json.dumps(data)}")
+        _dbg(f"[WEBHOOK] REGISTERED ACCOUNTS: {list(_accounts.keys())}")
 
         phone_number_id = None
         for entry in data.get("entry", []):
@@ -256,12 +263,12 @@ def make_app() -> Flask:
                 if phone_number_id:
                     break
 
-        print(f"[WEBHOOK] EXTRACTED phone_number_id={phone_number_id!r}")
+        _dbg(f"[WEBHOOK] EXTRACTED phone_number_id={phone_number_id!r}")
 
         account = _accounts.get(str(phone_number_id)) if phone_number_id else None
         if not account:
             _log.warn("worker", f"No account for phone_number_id={phone_number_id}")
-            print(f"[WEBHOOK] ACCOUNT LOOKUP FAILED — returning early, nothing sent to Service Bus")
+            _dbg(f"[WEBHOOK] ACCOUNT LOOKUP FAILED — returning early, nothing sent to Service Bus")
             return jsonify({"status": "ok"}), 200
 
         if not _verify_signature(payload, sig, account.get("app_secret", "")):
