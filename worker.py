@@ -241,9 +241,13 @@ def make_app() -> Flask:
 
     @flask_app.post("/webhook")
     def receive():
-        sig     = request.headers.get("X-Hub-Signature-256", "")
+        sig = request.headers.get("X-Hub-Signature-256", "")
         payload = request.get_data()
-        data    = request.get_json(silent=True) or {}
+        data = request.get_json(silent=True) or {}
+
+        # LOG RAW PAYLOAD — remove after debugging
+        print(f"[WEBHOOK] RAW PAYLOAD: {json.dumps(data)}")
+        print(f"[WEBHOOK] REGISTERED ACCOUNTS: {list(_accounts.keys())}")
 
         phone_number_id = None
         for entry in data.get("entry", []):
@@ -252,9 +256,12 @@ def make_app() -> Flask:
                 if phone_number_id:
                     break
 
+        print(f"[WEBHOOK] EXTRACTED phone_number_id={phone_number_id!r}")
+
         account = _accounts.get(str(phone_number_id)) if phone_number_id else None
         if not account:
             _log.warn("worker", f"No account for phone_number_id={phone_number_id}")
+            print(f"[WEBHOOK] ACCOUNT LOOKUP FAILED — returning early, nothing sent to Service Bus")
             return jsonify({"status": "ok"}), 200
 
         if not _verify_signature(payload, sig, account.get("app_secret", "")):
