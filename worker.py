@@ -204,16 +204,22 @@ def process_one(msg: dict, account: dict) -> int:
     record = json_builder.build_record(msg, name, saved)
 
     # ── Send to Azure Service Bus Topic ──────────────────────
-    ok = _send_to_topic(record)
-    if ok:
-        _log.info(name, f"Sent to Service Bus topic: sender={sender} type={msg.get('type')}")
+    # ── Send to Azure Service Bus Topic ──────────────────────
+    ok_sb = _send_to_topic(record)
+    if ok_sb:
+        _log.info(name, f"Sent to Service Bus: sender={sender} type={msg.get('type')}")
     else:
-        _log.warn(name, f"Service Bus unavailable — trying fallback connector")
-        ok = _conn.send(record)
-        if ok:
-            _log.info(name, f"Sent via fallback connector: sender={sender}")
+        _log.warn(name, f"Service Bus failed for sender={sender}")
+
+    # ── Always send to RabbitMQ as well ──────────────────────
+    try:
+        ok_rmq = _conn.send(record)
+        if ok_rmq:
+            _log.info(name, f"Sent to RabbitMQ: sender={sender}")
         else:
-            _log.warn(name, f"Both connectors unavailable — record lost: sender={sender}")
+            _log.warn(name, f"RabbitMQ send failed for sender={sender}")
+    except Exception as exc:
+        _log.error(name, f"RabbitMQ error: {exc}")
 
     checkpoint.save(_cfg["storage"]["checkpoints_dir"], name, msg_id)
     return handle_success(name, f"Processed message {short}")

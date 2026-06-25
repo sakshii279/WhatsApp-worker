@@ -32,6 +32,13 @@ connectors:
     queue: whatsapp_data
     fallback_path: /tmp/servicebus_fallback.json
 
+  rabbitmq:
+    type: rabbitmq
+    host: 192.168.100.231
+    api_port: 4444
+    queue: whatsapp_data
+    fallback_path: /tmp/rabbit_fallback.json
+
   kv:
     type: kv
     host: 192.168.100.231
